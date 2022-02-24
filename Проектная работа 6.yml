@@ -1,0 +1,117 @@
+# inventory: ~/ansible/hosts.txt
+[app]
+vm2 IP address
+vm3 IP address
+
+[database]
+vm1 IP address
+
+[database:vars]
+psql-version=12
+data_dir=/home/postgres_data
+
+[web]
+vm1 IP address
+
+
+# ~/ansible/playbooks/docker.yml
+---
+- name: Install Docker
+  hosts: app
+  become: yes
+  roles:
+
+    - docker_ubuntu
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - docker_centos
+      when: when: ansible_facts['distribution'] == 'CentOS'
+
+
+# ~/ansible/roles/docker_ubuntu/tasks/main.yml
+---
+- apt:
+    name: '{{ item }}'
+    state: latest
+  loop:
+    - ca-certificates
+    - curl
+    - gnupg
+    - lsb-release
+
+- shell: |
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo \
+    "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+    {{ ansible_distribution_release }} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+- apt:
+    update_cache: yes
+    name: '{{ item }}'
+    state: latest
+  loop:
+    - 'docker-ce'
+    - 'docker-ce-cli'
+    - 'containerd.io'
+
+- pip:
+    name: docker
+
+- community.docker.docker_container:
+    image: hello-world
+    name: hello-world
+    state: started
+
+
+# ~/ansible/roles/docker_centos/tasks/main.yml
+---
+- yum:
+    name: yum-utils
+    state: latest
+
+- shell: |
+    yum-config-manager \
+    --add-repo \
+    https://download.docker.com/linux/centos/docker-ce.repo
+
+- yum:
+    update_cache: yes
+    name: '{{ item }}'
+    state: latest
+  loop:
+    - 'docker-ce'
+    - 'docker-ce-cli'
+    - 'containerd.io'
+
+- pip:
+    name: docker
+
+- community.docker.docker_container:
+    image: hello-world
+    name: hello-world
+    state: started
+
+
+# ~/ansible/playbooks/postgres.yml
+---
+- hosts: database
+  become: yes
+  tasks:
+
+    - service:
+        name: '{{ item.version }}'
+        state: stopped
+      with_items:
+        - postgresql-'{{ psql-version }}'
+
+    - file:
+        path: '{{ data_dir }}'
+        state: directory
+        owner: postgres
+        group: postgres
+
+    - shell: initdb -D '{{ data_dir }}'
+
+    - service:
+        name: postgresql
+        state: started
